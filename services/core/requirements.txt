@@ -1,47 +1,41 @@
-# KnowledgeBot MVP Core Service Dependencies
-
-# Web Framework
-fastapi>=0.110.0
+# Core Framework
+fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
-python-multipart>=0.0.6
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
 
 # Database
-sqlalchemy[asyncio]>=2.0.0
+sqlalchemy>=2.0.25
 asyncpg>=0.29.0
-psycopg2-binary>=2.9.9
+aiosqlite>=0.19.0
 
 # Vector Database
 pymilvus>=2.3.0
 
-# Redis & Celery
-celery[redis]>=5.3.0
-redis>=7.0.0
+# HTTP Client
+httpx>=0.26.0
 
 # Object Storage
 minio>=7.2.0
 
-# Configuration
-pydantic>=2.5.0
-pydantic-settings>=2.1.0
-
-# Document Processing
-langchain>=0.1.0
-langchain-text-splitters>=0.0.1
-unstructured>=0.12.0
+# File Processing
+python-multipart>=0.0.6
 pypdf>=4.0.0
 python-docx>=1.1.0
-beautifulsoup4>=4.12.0
-lxml>=5.0.0
 
-# HTTP Client
-httpx>=0.26.0
+# Local Embedding (optional)
+# sentence-transformers>=2.2.0
 
-# Utilities
-python-dotenv>=1.0.0
-structlog>=24.1.0
+# Redis & Celery
+redis>=5.0.0
+celery>=5.3.0
 
 # Testing
 pytest>=7.4.0
-pytest-asyncio>=0.23.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
 httpx>=0.26.0
-faker>=23.0.0
+faker>=22.0.0
+
+# Development
+ruff>=0.1.0

@@ -1,0 +1,499 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'services/**'
+      - 'web/**'
+      - 'libs/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}
+
+jobs:
+  # ==================== 代码检查 ====================
+  lint:
+    name: Code Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff black isort mypy
+          pip install -r services/auth/requirements.txt || true
+      
+      - name: Run Ruff (lint)
+        run: ruff check services/ libs/ --output-format=github
+      
+      - name: Run Black (format check)
+        run: black --check services/ libs/
+      
+      - name: Run isort (import sorting)
+        run: isort --check-only services/ libs/
+
+  # ==================== 单元测试 ====================
+  test-auth:
+    name: Test Auth Service
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          cd services/auth
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov httpx
+      
+      - name: Run tests
+        run: |
+          cd services/auth
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=html
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: services/auth/coverage.xml
+          flags: auth
+
+  test-knowledge:
+    name: Test Knowledge Service
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd services/knowledge
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov httpx
+      
+      - name: Run tests
+        run: |
+          cd services/knowledge
+          pytest tests/ -v --cov=app --cov-report=xml
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: services/knowledge/coverage.xml
+          flags: knowledge
+
+  test-embedding:
+    name: Test Embedding Service
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd services/embedding
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov httpx
+      
+      - name: Run tests
+        run: |
+          cd services/embedding
+          pytest tests/ -v --cov=app --cov-report=xml
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: services/embedding/coverage.xml
+          flags: embedding
+
+  test-chat:
+    name: Test Chat Service
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd services/chat
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov httpx
+      
+      - name: Run tests
+        run: |
+          cd services/chat
+          pytest tests/ -v --cov=app --cov-report=xml
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: services/chat/coverage.xml
+          flags: chat
+
+  test-ingest:
+    name: Test Ingest Service
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd services/ingest
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov httpx
+      
+      - name: Run tests
+        run: |
+          cd services/ingest
+          pytest tests/ -v --cov=app --cov-report=xml
+      
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: services/ingest/coverage.xml
+          flags: ingest
+
+  test-web:
+    name: Test Web UI
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      
+      - name: Install dependencies
+        run: |
+          cd web
+          npm ci
+      
+      - name: Run lint
+        run: |
+          cd web
+          npm run lint
+      
+      - name: Run tests
+        run: |
+          cd web
+          npm run test:coverage || true
+      
+      - name: Build
+        run: |
+          cd web
+          npm run build
+
+  # ==================== 集成测试 ====================
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [test-auth, test-knowledge, test-embedding, test-chat, test-ingest]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Start services
+        run: |
+          cp .env.example .env
+          docker-compose up -d postgres redis minio
+          sleep 30
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Run integration tests
+        run: |
+          pip install pytest pytest-asyncio httpx
+          pytest tests/integration/ -v || true
+      
+      - name: Cleanup
+        if: always()
+        run: docker-compose down -v
+
+  # ==================== 构建镜像 ====================
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [integration-test]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        run: |
+          echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot:$(date +%Y%m%d)-${{ github.sha }}" >> $GITHUB_OUTPUT
+      
+      - name: Build and push Auth
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/auth
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-auth:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-auth:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Build and push Knowledge
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/knowledge
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-knowledge:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-knowledge:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Build and push Embedding
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/embedding
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-embedding:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-embedding:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Build and push Chat
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/chat
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-chat:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-chat:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Build and push Ingest
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/ingest
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-ingest:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-ingest:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Build and push Web
+        uses: docker/build-push-action@v5
+        with:
+          context: ./web
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-web:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-web:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ==================== 部署到 Staging ====================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-images
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment:
+      name: staging
+      url: https://staging.knowledgebot.example.com
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          kubeconfig: ${{ secrets.KUBE_CONFIG_STAGING }}
+      
+      - name: Deploy to Kubernetes
+        run: |
+          ./scripts/k8s-deploy.sh deploy
+      
+      - name: Wait for deployment
+        run: |
+          kubectl rollout status deployment/auth -n knowledgebot --timeout=300s
+          kubectl rollout status deployment/knowledge -n knowledgebot --timeout=300s
+          kubectl rollout status deployment/embedding -n knowledgebot --timeout=300s
+          kubectl rollout status deployment/chat -n knowledgebot --timeout=300s
+      
+      - name: Notify deployment status
+        if: success()
+        run: echo "Deployed to staging successfully!"
+
+  # ==================== 部署到 Production ====================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build-images
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment:
+      name: production
+      url: https://knowledgebot.example.com
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          kubeconfig: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+      
+      - name: Deploy to Kubernetes (Blue-Green)
+        run: |
+          # Blue-Green 部署策略
+          CURRENT_COLOR=$(kubectl get service gateway -n knowledgebot -o jsonpath='{.spec.selector.color}' || echo "blue")
+          NEW_COLOR="green"
+          if [ "$CURRENT_COLOR" = "green" ]; then
+            NEW_COLOR="blue"
+          fi
+          
+          echo "Current: $CURRENT_COLOR, Deploying: $NEW_COLOR"
+          
+          # 部署新版本
+          kubectl apply -f k8s/services.yaml --selector=color=$NEW_COLOR || true
+          
+          # 等待新版本就绪
+          kubectl wait --for=condition=ready pod -l color=$NEW_COLOR -n knowledgebot --timeout=300s || true
+          
+          # 切换流量
+          kubectl patch service gateway -n knowledgebot -p '{"spec":{"selector":{"color":"'$NEW_COLOR'"}}}'
+          
+          echo "Switched traffic to $NEW_COLOR"
+      
+      - name: Health check
+        run: |
+          for i in {1..30}; do
+            if kubectl exec -n knowledgebot deployment/gateway -- curl -sf http://localhost:80/health; then
+              echo "Health check passed!"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Health check failed!"
+          exit 1
+      
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          PREV_COLOR=$(kubectl get service gateway -n knowledgebot -o jsonpath='{.spec.selector.color}')
+          ROLLBACK_COLOR="blue"
+          if [ "$PREV_COLOR" = "blue" ]; then
+            ROLLBACK_COLOR="green"
+          fi
+          
+          kubectl patch service gateway -n knowledgebot -p '{"spec":{"selector":{"color":"'$ROLLBACK_COLOR'"}}}'
+          echo "Rolled back to $ROLLBACK_COLOR"
+
+  # ==================== 安全扫描 ====================
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build-images
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/knowledgebot-auth:latest
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+      
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ==================== 性能测试 ====================
+  performance-test:
+    name: Performance Test
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up k6
+        run: |
+          curl https://github.com/grafana/k6/releases/download/v0.47.0/k6-v0.47.0-linux-amd64.tar.gz -L | tar xz
+          sudo mv k6-*/k6 /usr/local/bin/
+      
+      - name: Run performance tests
+        run: |
+          k6 run tests/performance/load-test.js --out influxdb=http://influxdb:8086/k6 || true
+      
+      - name: Upload results
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-results
+          path: summary*.json

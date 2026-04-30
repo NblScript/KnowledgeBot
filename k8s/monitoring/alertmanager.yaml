@@ -1,0 +1,264 @@
+# Alertmanager 配置
+
+---
+# Alertmanager ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: knowledgebot
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+      # SMTP 配置（邮件通知）
+      smtp_smarthost: 'smtp.example.com:587'
+      smtp_from: 'alertmanager@example.com'
+      smtp_auth_username: 'alertmanager@example.com'
+      smtp_auth_password: 'your-smtp-password'
+      smtp_require_tls: true
+    
+    # 告警路由
+    route:
+      group_by: ['severity', 'alertname']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      receiver: 'default-receiver'
+      routes:
+        # 严重告警立即通知
+        - match:
+            severity: critical
+          receiver: 'critical-receiver'
+          group_wait: 10s
+          repeat_interval: 1h
+        
+        # 警告告警聚合通知
+        - match:
+            severity: warning
+          receiver: 'warning-receiver'
+          group_wait: 5m
+          repeat_interval: 4h
+    
+    # 接收器配置
+    receivers:
+      - name: 'default-receiver'
+        webhook_configs:
+          - url: 'http://gateway:80/webhook/alerts'
+            send_resolved: true
+      
+      - name: 'critical-receiver'
+        email_configs:
+          - to: 'admin@example.com'
+            headers:
+              Subject: '[严重] KnowledgeBot 告警 - {{ .GroupLabels.alertname }}'
+            html: |
+              <h2>严重告警</h2>
+              <p><strong>告警名称:</strong> {{ .GroupLabels.alertname }}</p>
+              <p><strong>详情:</strong></p>
+              {{ range .Alerts }}
+              <ul>
+                <li>{{ .Annotations.summary }}</li>
+                <li>{{ .Annotations.description }}</li>
+                <li>开始时间: {{ .StartsAt }}</li>
+              </ul>
+              {{ end }}
+        webhook_configs:
+          - url: 'http://gateway:80/webhook/alerts/critical'
+            send_resolved: true
+        # Slack 配置（可选）
+        slack_configs:
+          - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+            channel: '#knowledgebot-alerts'
+            title: '严重告警: {{ .GroupLabels.alertname }}'
+            text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+            send_resolved: true
+      
+      - name: 'warning-receiver'
+        email_configs:
+          - to: 'team@example.com'
+            headers:
+              Subject: '[警告] KnowledgeBot 告警 - {{ .GroupLabels.alertname }}'
+        webhook_configs:
+          - url: 'http://gateway:80/webhook/alerts/warning'
+            send_resolved: true
+    
+    # 抑制规则
+    inhibit_rules:
+      - source_match:
+          severity: 'critical'
+        target_match:
+          severity: 'warning'
+        equal: ['alertname', 'instance']
+
+---
+# Alertmanager PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager-pvc
+  namespace: knowledgebot
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: standard
+
+---
+# Alertmanager Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: knowledgebot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.26.0
+          ports:
+            - containerPort: 9093
+          args:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+            - "--storage.path=/alertmanager"
+            - "--web.external-url=http://alertmanager:9093"
+          volumeMounts:
+            - name: alertmanager-config
+              mountPath: /etc/alertmanager
+            - name: alertmanager-data
+              mountPath: /alertmanager
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: alertmanager-config
+          configMap:
+            name: alertmanager-config
+        - name: alertmanager-data
+          persistentVolumeClaim:
+            claimName: alertmanager-pvc
+
+---
+# Alertmanager Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: knowledgebot
+spec:
+  selector:
+    app: alertmanager
+  ports:
+    - port: 9093
+      targetPort: 9093
+
+---
+# PostgreSQL Exporter
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: knowledgebot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app: postgres-exporter
+    spec:
+      containers:
+        - name: postgres-exporter
+          image: prometheuscommunity/postgres-exporter:v0.12.1
+          ports:
+            - containerPort: 9187
+          env:
+            - name: DATA_SOURCE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: knowledgebot-secrets
+                  key: POSTGRES_USER
+            - name: DATA_SOURCE_URI
+              value: "postgres:5432/knowledgebot?sslmode=disable"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: knowledgebot
+spec:
+  selector:
+    app: postgres-exporter
+  ports:
+    - port: 9187
+      targetPort: 9187
+
+---
+# Redis Exporter
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-exporter
+  namespace: knowledgebot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-exporter
+  template:
+    metadata:
+      labels:
+        app: redis-exporter
+    spec:
+      containers:
+        - name: redis-exporter
+          image: oliver006/redis_exporter:v1.55.0
+          ports:
+            - containerPort: 9121
+          env:
+            - name: REDIS_ADDR
+              value: "redis://redis:6379"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-exporter
+  namespace: knowledgebot
+spec:
+  selector:
+    app: redis-exporter
+  ports:
+    - port: 9121
+      targetPort: 9121

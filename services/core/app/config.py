@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     app_secret_key: str = "your-secret-key-change-in-production"
     
     # 数据库配置
+    database_url: str = "sqlite+aiosqlite:///./data/knowledgebot.db"
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_user: str = "knowledgebot"
@@ -49,26 +50,31 @@ class Settings(BaseSettings):
     minio_secure: bool = False
     
     # Embedding 配置
-    embedding_provider: Literal["siliconflow", "openai"] = "siliconflow"
-    embedding_model: str = "BAAI/bge-m3"
-    embedding_dim: int = 1024
+    embedding_provider: Literal["openai", "local", "siliconflow", "qwen", "mock"] = "mock"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dim: int = 1536
+    embedding_device: str = "cpu"  # for local: cpu, cuda, mps
     
     # SiliconFlow API
     siliconflow_api_key: str = ""
+    siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
     
     # OpenAI API
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     
-    # LLM 配置
-    llm_provider: Literal["zhipu", "qwen", "openai"] = "zhipu"
-    llm_model: str = "glm-4"
-    
-    # 智谱 API
-    zhipu_api_key: str = ""
-    
     # 通义千问 API
     qwen_api_key: str = ""
+    qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    
+    # LLM 配置
+    llm_provider: Literal["openai", "siliconflow", "qwen", "mock"] = "mock"
+    llm_model: str = "gpt-4o-mini"
+    llm_max_tokens: int = 2048
+    llm_temperature: float = 0.7
+    
+    # 智谱 API (保留兼容)
+    zhipu_api_key: str = ""
     
     # Celery 配置
     celery_broker_url: str = ""
@@ -85,14 +91,18 @@ class Settings(BaseSettings):
     default_score_threshold: float = 0.5
     
     @property
-    def database_url(self) -> str:
+    def database_url_async(self) -> str:
         """异步数据库连接 URL"""
+        if self.database_url.startswith("sqlite"):
+            return self.database_url
         return f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
     
     @property
     def database_url_sync(self) -> str:
         """同步数据库连接 URL (for Alembic)"""
-        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        if self.database_url.startswith("sqlite"):
+            return self.database_url.replace("+aiosqlite", "")
+        return f"postgresql://{self.postgres_user}:***@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
     
     @property
     def redis_url(self) -> str:
@@ -106,9 +116,6 @@ class Settings(BaseSettings):
     def set_celery_broker(cls, v: str, info) -> str:
         if v:
             return v
-        redis_url = info.data.get("redis_url", "")
-        if redis_url:
-            return redis_url
         host = info.data.get("redis_host", "localhost")
         port = info.data.get("redis_port", 6379)
         return f"redis://{host}:{port}/0"
@@ -118,9 +125,6 @@ class Settings(BaseSettings):
     def set_celery_backend(cls, v: str, info) -> str:
         if v:
             return v
-        redis_url = info.data.get("redis_url", "")
-        if redis_url:
-            return redis_url
         host = info.data.get("redis_host", "localhost")
         port = info.data.get("redis_port", 6379)
         return f"redis://{host}:{port}/0"

@@ -1,0 +1,76 @@
+# Ingest Service 配置段 - 用于集成到主 docker-compose.yml
+
+services:
+  # Ingest Service (文档摄入服务)
+  ingest:
+    build:
+      context: ./services/ingest
+      dockerfile: Dockerfile
+    container_name: knowledgebot-ingest
+    environment:
+      - APP_ENV=${APP_ENV:-development}
+      - APP_PORT=8005
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - MINIO_BUCKET=knowledgebot
+      - KNOWLEDGE_SERVICE_URL=http://knowledge:8002
+      - EMBEDDING_SERVICE_URL=http://embedding:8003
+      - CHUNK_SIZE=${CHUNK_SIZE:-500}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
+    ports:
+      - "8005:8005"
+    depends_on:
+      - redis
+      - knowledge
+      - embedding
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Ingest Celery Worker
+  ingest-worker:
+    build:
+      context: ./services/ingest
+      dockerfile: Dockerfile
+    container_name: knowledgebot-ingest-worker
+    command: ["python", "scripts/worker.py"]
+    environment:
+      - APP_ENV=${APP_ENV:-production}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - KNOWLEDGE_SERVICE_URL=http://knowledge:8002
+      - EMBEDDING_SERVICE_URL=http://embedding:8003
+    depends_on:
+      - redis
+      - knowledge
+      - embedding
+    restart: unless-stopped
+    deploy:
+      replicas: 2  # 可根据负载调整
+
+  # Flower - Celery 监控界面（可选）
+  ingest-flower:
+    build:
+      context: ./services/ingest
+      dockerfile: Dockerfile
+    container_name: knowledgebot-ingest-flower
+    command: ["python", "scripts/flower.py"]
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+      - ingest-worker
+    profiles:
+      - monitoring  # 仅在 monitoring profile 启用

@@ -30,19 +30,26 @@ async def search(
             detail=f"Knowledge base {request.kb_id} not found",
         )
     
-    # TODO: 调用 Embedding 服务获取查询向量
-    # 模拟查询向量（实际需要调用 Embedding 服务）
-    import random
-    query_vector = [random.random() for _ in range(1024)]
+    # 执行向量检索 - 使用 Embedding 服务
+    from app.services.embedding import get_embedding
+    
+    embedding_service = get_embedding()
+    query_vector = await embedding_service.embed_single(request.query)
     
     # 执行向量检索
-    results = milvus_client.search(
-        kb_id=request.kb_id,
-        query_vector=query_vector,
-        top_k=request.top_k,
-        score_threshold=request.score_threshold,
-        filters=request.filters,
-    )
+    try:
+        results = milvus_client.search(
+            kb_id=request.kb_id,
+            query_vector=query_vector,
+            top_k=request.top_k,
+            score_threshold=request.score_threshold,
+            filters=request.filters,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Vector search failed: {str(e)}",
+        )
     
     # 获取文档名称
     doc_ids = list(set(r["doc_id"] for r in results))

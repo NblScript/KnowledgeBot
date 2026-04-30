@@ -37,7 +37,7 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     vector_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    chunk_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         default=datetime.utcnow,
         nullable=False,

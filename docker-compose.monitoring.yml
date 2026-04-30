@@ -1,0 +1,84 @@
+# Docker Compose 监控配置（开发环境）
+
+services:
+  # ==================== Prometheus ====================
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: kb-prometheus
+    volumes:
+      - ./k8s/monitoring/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    networks:
+      - knowledgebot-net
+
+  # ==================== Grafana ====================
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: kb-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./k8s/monitoring/grafana.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - knowledgebot-net
+
+  # ==================== Alertmanager ====================
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: kb-alertmanager
+    volumes:
+      - alertmanager_data:/alertmanager
+    ports:
+      - "9093:9093"
+    networks:
+      - knowledgebot-net
+
+  # ==================== PostgreSQL Exporter ====================
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.12.1
+    container_name: kb-postgres-exporter
+    environment:
+      - DATA_SOURCE_URI=postgres:5432/knowledgebot?sslmode=disable
+      - DATA_SOURCE_USER=knowledgebot
+      - DATA_SOURCE_PASS=knowledgebot123
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres
+    networks:
+      - knowledgebot-net
+
+  # ==================== Redis Exporter ====================
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.55.0
+    container_name: kb-redis-exporter
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+    networks:
+      - knowledgebot-net
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+
+networks:
+  knowledgebot-net:
+    external: true

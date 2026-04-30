@@ -1,14 +1,13 @@
-# KnowledgeBot Development Docker Compose
-# Usage: docker-compose up -d
-
-version: '3.8'
+# KnowledgeBot 微服务架构 Docker Compose
+# 使用方法: docker-compose up -d
 
 services:
-  # PostgreSQL Database
+  # ==================== 基础设施 ====================
+  
+  # PostgreSQL 数据库
   postgres:
-    image: postgres:15-alpine
-    container_name: knowledgebot-postgres
-    restart: unless-stopped
+    image: postgres:16-alpine
+    container_name: kb-postgres
     environment:
       POSTGRES_USER: knowledgebot
       POSTGRES_PASSWORD: knowledgebot123
@@ -19,36 +18,20 @@ services:
       - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U knowledgebot"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - knowledgebot-net
 
-  # Redis (Celery Broker + Cache)
-  redis:
-    image: redis:7.2-alpine
-    container_name: knowledgebot-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Milvus Standalone
+  # Milvus 向量数据库依赖
   etcd:
     image: quay.io/coreos/etcd:v3.5.5
-    container_name: knowledgebot-etcd
-    restart: unless-stopped
+    container_name: kb-etcd
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
       - ETCD_QUOTA_BACKEND_BYTES=4294967296
-      - ETCD_SNAPSHOT_COUNT=50000
     volumes:
       - etcd_data:/etcd
     command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
@@ -57,30 +40,33 @@ services:
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - knowledgebot-net
 
   minio:
-    image: minio/minio:RELEASE.2024-01-01T16-36-33Z
-    container_name: knowledgebot-minio
-    restart: unless-stopped
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    container_name: kb-minio
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin123
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
     volumes:
-      - minio_data:/data
+      - minio_data:/minio_data
+    command: minio server /minio_data --console-address ":9001"
     ports:
       - "9000:9000"
       - "9001:9001"
-    command: server /data --console-address ":9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - knowledgebot-net
 
   milvus:
     image: milvusdb/milvus:v2.3.3
-    container_name: knowledgebot-milvus
-    restart: unless-stopped
+    container_name: kb-milvus
+    command: ["milvus", "run", "standalone"]
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
@@ -89,72 +75,282 @@ services:
     ports:
       - "19530:19530"
       - "9091:9091"
-    depends_on:
-      - etcd
-      - minio
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 30s
+      start_period: 90s
       timeout: 20s
       retries: 3
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - knowledgebot-net
 
-  # KnowledgeBot API Service
-  api:
-    build:
-      context: ./services/core
-      dockerfile: Dockerfile
-    container_name: knowledgebot-api
-    restart: unless-stopped
-    environment:
-      - APP_ENV=development
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - REDIS_HOST=redis
-      - MILVUS_HOST=milvus
-      - MILVUS_PORT=19530
-      - MINIO_ENDPOINT=minio:9000
+  # Redis 缓存和消息队列
+  redis:
+    image: redis:7-alpine
+    container_name: kb-redis
+    volumes:
+      - redis_data:/data
     ports:
-      - "8000:8000"
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - knowledgebot-net
+
+  # ==================== 微服务 ====================
+
+  # API Gateway (Nginx)
+  gateway:
+    image: nginx:alpine
+    container_name: kb-gateway
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - auth
+      - knowledge
+      - embedding
+      - chat
+      - ingest
+    networks:
+      - knowledgebot-net
+
+  # Auth Service (端口 8001)
+  auth:
+    build:
+      context: ./services/auth
+      dockerfile: Dockerfile
+    container_name: kb-auth
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://knowledgebot:knowledgebot123@postgres:5432/knowledgebot
+      - DATABASE_SCHEMA=auth
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-change-in-production}
+      - JWT_ALGORITHM=HS256
+      - JWT_ACCESS_EXPIRE_MINUTES=60
+      - JWT_REFRESH_EXPIRE_DAYS=7
+      - APP_ENV=${APP_ENV:-development}
+    ports:
+      - "8001:8001"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+    networks:
+      - knowledgebot-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Knowledge Service (端口 8002)
+  knowledge:
+    build:
+      context: ./services/knowledge
+      dockerfile: Dockerfile
+    container_name: kb-knowledge
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://knowledgebot:knowledgebot123@postgres:5432/knowledgebot
+      - DATABASE_SCHEMA=knowledge
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - MINIO_BUCKET=documents
+      - MINIO_SECURE=false
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      - REDIS_URL=redis://redis:6379/1
+      - INGEST_SERVICE_URL=http://ingest:8005
+      - APP_ENV=${APP_ENV:-development}
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
         condition: service_healthy
       milvus:
         condition: service_healthy
-    volumes:
-      - ./services/core:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      redis:
+        condition: service_healthy
+    networks:
+      - knowledgebot-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
-  # Celery Worker
-  celery-worker:
+  # Embedding Service (端口 8003)
+  embedding:
     build:
-      context: ./services/core
+      context: ./services/embedding
       dockerfile: Dockerfile
-    container_name: knowledgebot-celery
-    restart: unless-stopped
+    container_name: kb-embedding
     environment:
-      - APP_ENV=development
-      - POSTGRES_HOST=postgres
-      - REDIS_HOST=redis
       - MILVUS_HOST=milvus
-      - MINIO_ENDPOINT=minio:9000
+      - MILVUS_PORT=19530
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-mock}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-1536}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-}
+      - APP_ENV=${APP_ENV:-development}
+    ports:
+      - "8003:8003"
+    depends_on:
+      milvus:
+        condition: service_healthy
+    networks:
+      - knowledgebot-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/v1/embeddings/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Chat Service (端口 8004)
+  chat:
+    build:
+      context: ./services/chat
+      dockerfile: Dockerfile
+    container_name: kb-chat
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://knowledgebot:knowledgebot123@postgres:5432/knowledgebot
+      - DATABASE_SCHEMA=chat
+      - REDIS_URL=redis://redis:6379/2
+      - EMBEDDING_SERVICE_URL=http://embedding:8003
+      - LLM_PROVIDER=${LLM_PROVIDER:-mock}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      - LLM_MAX_TOKENS=2048
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-}
+      - APP_ENV=${APP_ENV:-development}
+    ports:
+      - "8004:8004"
     depends_on:
       postgres:
         condition: service_healthy
+      embedding:
+        condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./services/core:/app
-    command: celery -A app.tasks.celery_app worker --loglevel=info
+    networks:
+      - knowledgebot-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
+  # Ingest Service (端口 8005)
+  ingest:
+    build:
+      context: ./services/ingest
+      dockerfile: Dockerfile
+    container_name: kb-ingest
+    environment:
+      - REDIS_URL=redis://redis:6379/3
+      - KNOWLEDGE_SERVICE_URL=http://knowledge:8002
+      - EMBEDDING_SERVICE_URL=http://embedding:8003
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - MINIO_BUCKET=documents
+      - APP_ENV=${APP_ENV:-development}
+    ports:
+      - "8005:8005"
+    depends_on:
+      redis:
+        condition: service_healthy
+      knowledge:
+        condition: service_healthy
+      embedding:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - knowledgebot-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Celery Worker (Ingest Service 后台任务处理)
+  ingest-worker:
+    build:
+      context: ./services/ingest
+      dockerfile: Dockerfile
+    container_name: kb-ingest-worker
+    command: ["python", "-m", "app.tasks.worker"]
+    environment:
+      - REDIS_URL=redis://redis:6379/3
+      - KNOWLEDGE_SERVICE_URL=http://knowledge:8002
+      - EMBEDDING_SERVICE_URL=http://embedding:8003
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - MINIO_BUCKET=documents
+      - CELERY_BROKER_URL=redis://redis:6379/3
+      - CELERY_RESULT_BACKEND=redis://redis:6379/4
+    depends_on:
+      redis:
+        condition: service_healthy
+      knowledge:
+        condition: service_healthy
+      embedding:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - knowledgebot-net
+
+  # Flower - Celery 监控 (可选)
+  flower:
+    build:
+      context: ./services/ingest
+      dockerfile: Dockerfile
+    container_name: kb-flower
+    command: ["python", "-m", "app.tasks.flower"]
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/3
+      - CELERY_RESULT_BACKEND=redis://redis:6379/4
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - knowledgebot-net
+    profiles:
+      - monitoring
+
+# ==================== 网络 ====================
+networks:
+  knowledgebot-net:
+    driver: bridge
+
+# ==================== 数据卷 ====================
 volumes:
   postgres_data:
-  redis_data:
   etcd_data:
   minio_data:
   milvus_data:
-
-networks:
-  default:
-    name: knowledgebot-network
+  redis_data:

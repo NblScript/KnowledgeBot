@@ -1,0 +1,356 @@
+# KnowledgeBot 监控配置
+# Prometheus + Grafana + Alertmanager
+
+---
+# Prometheus RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: knowledgebot
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes", "services", "endpoints", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: knowledgebot
+
+---
+# Prometheus ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: knowledgebot
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'knowledgebot'
+    
+    # Alertmanager 配置
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              - alertmanager:9093
+    
+    # 告警规则文件
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+    
+    # 抓取配置
+    scrape_configs:
+      # Prometheus 自身
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+      
+      # Kubernetes Pod 监控
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - knowledgebot
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: (.+)
+            target_label: __address__
+            replacement: $1
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+      
+      # Kubernetes Service 监控
+      - job_name: 'kubernetes-services'
+        kubernetes_sd_configs:
+          - role: service
+            namespaces:
+              names:
+                - knowledgebot
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+      
+      # 各微服务监控
+      - job_name: 'auth-service'
+        static_configs:
+          - targets: ['auth:8001']
+        metrics_path: /metrics
+      
+      - job_name: 'knowledge-service'
+        static_configs:
+          - targets: ['knowledge:8002']
+        metrics_path: /metrics
+      
+      - job_name: 'embedding-service'
+        static_configs:
+          - targets: ['embedding:8003']
+        metrics_path: /metrics
+      
+      - job_name: 'chat-service'
+        static_configs:
+          - targets: ['chat:8004']
+        metrics_path: /metrics
+      
+      - job_name: 'ingest-service'
+        static_configs:
+          - targets: ['ingest:8005']
+        metrics_path: /metrics
+      
+      # PostgreSQL Exporter
+      - job_name: 'postgres'
+        static_configs:
+          - targets: ['postgres-exporter:9187']
+      
+      # Redis Exporter
+      - job_name: 'redis'
+        static_configs:
+          - targets: ['redis-exporter:9121']
+      
+      # Milvus 监控
+      - job_name: 'milvus'
+        static_configs:
+          - targets: ['milvus:9091']
+
+---
+# 告警规则
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: knowledgebot
+data:
+  alerts.yml: |
+    groups:
+      - name: knowledgebot-alerts
+        interval: 30s
+        rules:
+          # Pod 可用性告警
+          - alert: PodDown
+            expr: up{job!=""} == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Pod {{ $labels.instance }} 不可用"
+              description: "{{ $labels.job }} 服务已停止响应超过 1 分钟"
+          
+          # CPU 使用率告警
+          - alert: HighCPUUsage
+            expr: |
+              100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "CPU 使用率过高"
+              description: "实例 {{ $labels.instance }} CPU 使用率超过 80%"
+          
+          # 内存使用率告警
+          - alert: HighMemoryUsage
+            expr: |
+              (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "内存使用率过高"
+              description: "实例 {{ $labels.instance }} 内存使用率超过 85%"
+          
+          # 应用错误率告警
+          - alert: HighErrorRate
+            expr: |
+              sum(rate(http_requests_total{status=~"5.."}[5m])) 
+              / sum(rate(http_requests_total[5m])) > 0.05
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "API 错误率过高"
+              description: "5xx 错误率超过 5%"
+          
+          # 响应时间告警
+          - alert: HighLatency
+            expr: |
+              histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 2
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "API 响应时间过长"
+              description: "P95 响应时间超过 2 秒"
+          
+          # PostgreSQL 连接数告警
+          - alert: PostgresTooManyConnections
+            expr: pg_stat_activity_count > 100
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "PostgreSQL 连接数过多"
+              description: "当前连接数: {{ $value }}"
+          
+          # Redis 内存告警
+          - alert: RedisMemoryHigh
+            expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Redis 内存使用过高"
+              description: "Redis 内存使用率超过 80%"
+          
+          # Milvus 查询延迟告警
+          - alert: MilvusHighQueryLatency
+            expr: milvus_query_latency_avg > 1000
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Milvus 查询延迟过高"
+              description: "平均查询延迟超过 1 秒"
+          
+          # 磁盘空间告警
+          - alert: DiskSpaceLow
+            expr: |
+              (1 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})) > 0.85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "磁盘空间不足"
+              description: "磁盘使用率超过 85%"
+          
+          # 服务重启告警
+          - alert: ServiceRestart
+            expr: increase(kube_pod_container_status_restarts_total[1h]) > 3
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "服务频繁重启"
+              description: "{{ $labels.pod }} 在过去 1 小时内重启超过 3 次"
+
+---
+# Prometheus PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-pvc
+  namespace: knowledgebot
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+
+---
+# Prometheus Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: knowledgebot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.47.0
+          ports:
+            - containerPort: 9090
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time=15d"
+            - "--web.enable-lifecycle"
+            - "--web.enable-admin-api"
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus
+            - name: prometheus-rules
+              mountPath: /etc/prometheus/rules
+            - name: prometheus-data
+              mountPath: /prometheus
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+        - name: prometheus-rules
+          configMap:
+            name: prometheus-rules
+        - name: prometheus-data
+          persistentVolumeClaim:
+            claimName: prometheus-pvc
+
+---
+# Prometheus Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: knowledgebot
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090

@@ -184,6 +184,79 @@ class OpenAILLM(BaseLLM):
                         continue
 
 
+class QwenLLM(BaseLLM):
+    """通义千问 LLM (DashScope API)"""
+    
+    def __init__(self, api_key: str, model: str = "qwen-plus"):
+        self.api_key = api_key
+        self.model = model
+        self.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    
+    async def generate(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+    ) -> str:
+        """生成回答"""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                },
+                timeout=60.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+    
+    async def generate_stream(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+    ):
+        """流式生成"""
+        async with httpx.AsyncClient() as client:
+            response = await client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "stream": True,
+                },
+                timeout=60.0,
+            )
+            async for line in response.aiter_lines():
+                if line.startswith("data:"):
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(data_str)
+                        if "choices" in data and data["choices"]:
+                            delta = data["choices"][0].get("delta", {})
+                            if "content" in delta:
+                                yield delta["content"]
+                    except json.JSONDecodeError:
+                        continue
+
+
 # RAG Prompt
 SYSTEM_PROMPT = """你是一个专业的知识库助手。基于提供的参考资料回答用户问题。
 
@@ -209,6 +282,40 @@ def build_rag_prompt(query: str, contexts: list[dict[str, Any]]) -> str:
 请基于参考资料回答用户问题："""
 
 
+class MockLLM(BaseLLM):
+    """模拟 LLM 服务 (用于测试)"""
+    
+    def __init__(self, model: str = "mock-llm"):
+        self.model = model
+    
+    async def generate(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+    ) -> str:
+        """生成模拟回答"""
+        # 从消息中提取用户问题
+        user_msg = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                user_msg = msg.get("content", "")
+                break
+        
+        return f"这是一个模拟的回答。您的问题是：{user_msg[:50]}..."
+    
+    async def generate_stream(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+    ):
+        """流式生成模拟回答"""
+        response = "这是一个模拟的回答。"
+        for char in response:
+            yield char
+
+
 # 全局 LLM 实例
 _llm_instance: BaseLLM | None = None
 
@@ -223,12 +330,19 @@ def get_llm() -> BaseLLM:
                 api_key=settings.zhipu_api_key,
                 model=settings.llm_model,
             )
+        elif settings.llm_provider == "qwen":
+            _llm_instance = QwenLLM(
+                api_key=settings.qwen_api_key,
+                model=settings.llm_model,
+            )
         elif settings.llm_provider == "openai":
             _llm_instance = OpenAILLM(
                 api_key=settings.openai_api_key,
                 model=settings.llm_model,
                 base_url=settings.openai_base_url,
             )
+        elif settings.llm_provider == "mock":
+            _llm_instance = MockLLM(model=settings.llm_model)
         else:
             raise ValueError(f"Unknown LLM provider: {settings.llm_provider}")
     

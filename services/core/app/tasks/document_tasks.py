@@ -1,61 +1,119 @@
-"""文档处理 Celery 任务"""
+"""Celery 任务 - 异步文档处理"""
 
-import logging
-
-from app.tasks.celery_app import celery_app
-
-logger = logging.getLogger(__name__)
+from app.celery_app import celery_app
+from app.config import settings
+from app.database import async_session_factory
+from app.models import Chunk, Document
+from app.services.document_processor import get_processor
+from app.database import milvus_client
+from sqlalchemy import select
 
 
 @celery_app.task(bind=True)
-def process_document_task(self, doc_id: str, kb_id: str):
-    """文档处理任务
+def process_document_task(self, doc_id: str):
+    """异步处理文档任务"""
+    import asyncio
     
-    流程：
-    1. 从 MinIO 获取文件
-    2. 解析文档
-    3. 分块
-    4. 向量化
-    5. 存储到 Milvus
-    6. 更新数据库状态
-    """
-    logger.info(f"Processing document {doc_id} for knowledge base {kb_id}")
+    # 创建事件循环运行异步代码
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     
     try:
-        # 更新状态为 processing
-        self.update_state(
-            state="PROCESSING",
-            meta={"step": "Starting document processing"},
-        )
-        
-        # TODO: 实现完整的处理流程
-        # 1. 获取文件
-        # 2. 解析文档
-        # 3. 分块
-        # 4. 获取向量
-        # 5. 存储
-        # 6. 更新状态
-        
-        return {
-            "status": "completed",
-            "doc_id": doc_id,
-            "chunks_count": 0,
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to process document {doc_id}: {e}")
-        self.update_state(
-            state="FAILED",
-            meta={"error": str(e)},
-        )
-        raise
+        loop.run_until_complete(_process_document_async(doc_id))
+    finally:
+        loop.close()
 
 
-@celery_app.task(bind=True)
-def batch_process_documents(self, kb_id: str, doc_ids: list[str]):
-    """批量处理文档"""
-    results = []
-    for doc_id in doc_ids:
-        result = process_document_task(doc_id, kb_id)
-        results.append(result)
-    return results
+async def _process_document_async(doc_id: str):
+    """异步处理文档"""
+    from minio import Minio
+    
+    async with async_session_factory() as session:
+        # 获取文档记录
+        result = await session.execute(
+            select(Document).where(Document.id == doc_id)
+        )
+        doc = result.scalar_one_or_none()
+        
+        if not doc:
+            print(f"Document {doc_id} not found")
+            return
+        
+        try:
+            # 更新状态为处理中
+            doc.status = "processing"
+            await session.commit()
+            
+            # 从 MinIO 获取文件内容
+            minio_client = Minio(
+                settings.minio_endpoint,
+                access_key=settings.minio_access_key,
+                secret_key=settings.minio_secret_key,
+                secure=settings.minio_secure,
+            )
+            
+            response = minio_client.get_object(
+                settings.minio_bucket,
+                doc.file_path,
+            )
+            content = response.read()
+            response.close()
+            response.release_conn()
+            
+            # 处理文档
+            processor = get_processor()
+            parsed, chunks = await processor.process(
+                content,
+                doc.file_name,
+                doc.file_type,
+            )
+            
+            # 向量化分块
+            vectors = await processor.embed_chunks(
+                chunks,
+                doc.kb_id,
+                doc.id,
+            )
+            
+            # 存储到 Milvus
+            if vectors:
+                milvus_client.insert(
+                    collection_name=doc.kb_id,
+                    data=vectors,
+                )
+            
+            # 存储到数据库
+            for chunk in chunks:
+                chunk_record = Chunk(
+                    id=hashlib.md5(f"{doc_id}_{chunk.chunk_index}".encode()).hexdigest()[:16],
+                    doc_id=doc.id,
+                    chunk_index=chunk.chunk_index,
+                    content=chunk.content,
+                    token_count=chunk.token_count,
+                    metadata_=chunk.metadata,
+                )
+                session.add(chunk_record)
+            
+            # 更新文档状态
+            doc.status = "completed"
+            doc.chunk_count = len(chunks)
+            await session.commit()
+            
+            print(f"Document {doc_id} processed successfully: {len(chunks)} chunks")
+            
+        except Exception as e:
+            # 更新状态为失败
+            doc.status = "failed"
+            doc.error_message = str(e)
+            await session.commit()
+            print(f"Failed to process document {doc_id}: {e}")
+            raise
+
+
+import hashlib
+
+
+@celery_app.task
+def health_check():
+    """健康检查任务"""
+    return {"status": "ok", "provider": settings.llm_provider}

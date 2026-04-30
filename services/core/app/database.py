@@ -17,13 +17,13 @@ class Base(DeclarativeBase):
     pass
 
 
-# PostgreSQL 异步引擎
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.app_debug,
-    pool_size=5,
-    max_overflow=10,
-)
+# PostgreSQL 异步引擎 - 根据数据库类型配置
+_engine_kwargs = {"echo": settings.app_debug}
+if not settings.database_url.startswith("sqlite"):
+    _engine_kwargs["pool_size"] = 5
+    _engine_kwargs["max_overflow"] = 10
+
+engine = create_async_engine(settings.database_url, **_engine_kwargs)
 
 # 异步会话工厂
 async_session_maker = async_sessionmaker(
@@ -276,3 +276,23 @@ class MilvusClient:
 
 # 全局 Milvus 客户端
 milvus_client = MilvusClient()
+
+
+# MinIO 客户端
+def get_minio_client():
+    """获取 MinIO 客户端"""
+    from minio import Minio
+    
+    return Minio(
+        settings.minio_endpoint,
+        access_key=settings.minio_access_key,
+        secret_key=settings.minio_secret_key,
+        secure=settings.minio_secure,
+    )
+
+
+def ensure_minio_bucket():
+    """确保 MinIO bucket 存在"""
+    client = get_minio_client()
+    if not client.bucket_exists(settings.minio_bucket):
+        client.make_bucket(settings.minio_bucket)

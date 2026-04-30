@@ -19,6 +19,10 @@ from app.schemas.document import (
     ProcessDocumentResponse,
 )
 
+# 知识库下的文档路由 (将注册到 /knowledge-bases)
+kb_router = APIRouter()
+
+# 文档直接操作路由 (将注册到 /documents)
 router = APIRouter()
 
 
@@ -29,7 +33,9 @@ def get_file_extension(filename: str) -> str:
     return ""
 
 
-@router.post(
+# ============ 知识库下的文档路由 ============
+
+@kb_router.post(
     "/{kb_id}/documents",
     response_model=DocumentResponse,
     status_code=status.HTTP_201_CREATED,
@@ -108,7 +114,7 @@ async def upload_document(
     return DocumentResponse.model_validate(doc)
 
 
-@router.get("/{kb_id}/documents", response_model=PaginatedResponse[DocumentListResponse])
+@kb_router.get("/{kb_id}/documents", response_model=PaginatedResponse[DocumentListResponse])
 async def list_documents(
     kb_id: str,
     page: Annotated[int, Query(ge=1)] = 1,
@@ -173,6 +179,8 @@ async def list_documents(
         ),
     )
 
+
+# ============ 文档直接操作路由 ============
 
 @router.get("/{doc_id}", response_model=DocumentDetailResponse)
 async def get_document(
@@ -247,9 +255,15 @@ async def process_document(
         )
     
     # TODO: 触发 Celery 任务
+    # 更新状态为处理中
+    doc.status = "processing"
+    await session.commit()
+    
+    # 模拟任务ID
+    task_id = f"task_{doc_id}"
     
     return ProcessDocumentResponse(
-        task_id=str(uuid.uuid4()),
+        task_id=task_id,
         status="processing",
         message="Document processing started",
     )
@@ -272,12 +286,10 @@ async def delete_document(
             detail=f"Document {doc_id} not found",
         )
     
-    # 删除 Milvus 中的向量
+    # 删除关联的 Milvus 数据
     from app.database import milvus_client
-    milvus_client.delete_by_doc_id(doc.kb_id, doc_id)
+    milvus_client.delete(doc.kb_id, f"doc_id == '{doc_id}'")
     
-    # 删除数据库记录（级联删除分块）
+    # 删除数据库记录 (级联删除 chunks)
     await session.delete(doc)
     await session.commit()
-    
-    return None

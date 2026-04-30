@@ -1,0 +1,555 @@
+# KnowledgeBot 微服务部署配置
+# ==================== Auth Service ====================
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth
+  namespace: knowledgebot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth
+  template:
+    metadata:
+      labels:
+        app: auth
+    spec:
+      containers:
+        - name: auth
+          image: knowledgebot-auth:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8001
+          envFrom:
+            - configMapRef:
+                name: knowledgebot-config
+            - secretRef:
+                name: knowledgebot-secrets
+          env:
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            - name: DATABASE_SCHEMA
+              value: "auth"
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 15
+            periodSeconds: 20
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth
+  namespace: knowledgebot
+spec:
+  selector:
+    app: auth
+  ports:
+    - port: 8001
+      targetPort: 8001
+
+---
+# ==================== Knowledge Service ====================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knowledge
+  namespace: knowledgebot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: knowledge
+  template:
+    metadata:
+      labels:
+        app: knowledge
+    spec:
+      containers:
+        - name: knowledge
+          image: knowledgebot-knowledge:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8002
+          envFrom:
+            - configMapRef:
+                name: knowledgebot-config
+            - secretRef:
+                name: knowledgebot-secrets
+          env:
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            - name: DATABASE_SCHEMA
+              value: "knowledge"
+            - name: REDIS_URL
+              value: "redis://redis:6379/1"
+            - name: MINIO_SECURE
+              value: "false"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: knowledge
+  namespace: knowledgebot
+spec:
+  selector:
+    app: knowledge
+  ports:
+    - port: 8002
+      targetPort: 8002
+
+---
+# ==================== Embedding Service ====================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: embedding
+  namespace: knowledgebot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: embedding
+  template:
+    metadata:
+      labels:
+        app: embedding
+    spec:
+      containers:
+        - name: embedding
+          image: knowledgebot-embedding:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8003
+          envFrom:
+            - configMapRef:
+                name: knowledgebot-config
+            - secretRef:
+                name: knowledgebot-secrets
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /v1/embeddings/health
+              port: 8003
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: embedding
+  namespace: knowledgebot
+spec:
+  selector:
+    app: embedding
+  ports:
+    - port: 8003
+      targetPort: 8003
+
+---
+# ==================== Chat Service ====================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat
+  namespace: knowledgebot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chat
+  template:
+    metadata:
+      labels:
+        app: chat
+    spec:
+      containers:
+        - name: chat
+          image: knowledgebot-chat:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8004
+          envFrom:
+            - configMapRef:
+                name: knowledgebot-config
+            - secretRef:
+                name: knowledgebot-secrets
+          env:
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            - name: DATABASE_SCHEMA
+              value: "chat"
+            - name: REDIS_URL
+              value: "redis://redis:6379/2"
+            - name: EMBEDDING_SERVICE_URL
+              value: "http://embedding:8003"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat
+  namespace: knowledgebot
+spec:
+  selector:
+    app: chat
+  ports:
+    - port: 8004
+      targetPort: 8004
+
+---
+# ==================== Ingest Service ====================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingest
+  namespace: knowledgebot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ingest
+  template:
+    metadata:
+      labels:
+        app: ingest
+    spec:
+      containers:
+        - name: ingest
+          image: knowledgebot-ingest:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8005
+          envFrom:
+            - configMapRef:
+                name: knowledgebot-config
+            - secretRef:
+                name: knowledgebot-secrets
+          env:
+            - name: REDIS_URL
+              value: "redis://redis:6379/3"
+            - name: KNOWLEDGE_SERVICE_URL
+              value: "http://knowledge:8002"
+            - name: EMBEDDING_SERVICE_URL
+              value: "http://embedding:8003"
+            - name: CELERY_BROKER_URL
+              value: "redis://redis:6379/3"
+            - name: CELERY_RESULT_BACKEND
+              value: "redis://redis:6379/4"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingest
+  namespace: knowledgebot
+spec:
+  selector:
+    app: ingest
+  ports:
+    - port: 8005
+      targetPort: 8005
+
+---
+# ==================== Ingest Worker ====================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingest-worker
+  namespace: knowledgebot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ingest-worker
+  template:
+    metadata:
+      labels:
+        app: ingest-worker
+    spec:
+      containers:
+        - name: worker
+          image: knowledgebot-ingest:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -m
+            - app.tasks.worker
+          envFrom:
+            - configMapRef:
+                name: knowledgebot-config
+            - secretRef:
+                name: knowledgebot-secrets
+          env:
+            - name: REDIS_URL
+              value: "redis://redis:6379/3"
+            - name: KNOWLEDGE_SERVICE_URL
+              value: "http://knowledge:8002"
+            - name: EMBEDDING_SERVICE_URL
+              value: "http://embedding:8003"
+            - name: CELERY_BROKER_URL
+              value: "redis://redis:6379/3"
+            - name: CELERY_RESULT_BACKEND
+              value: "redis://redis:6379/4"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+
+---
+# ==================== Gateway (Nginx) ====================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: knowledgebot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: gateway-config
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: knowledgebot
+data:
+  nginx.conf: |
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    events {
+      worker_connections 1024;
+    }
+    http {
+      sendfile on;
+      tcp_nopush on;
+      keepalive_timeout 65;
+      gzip on;
+      gzip_types text/plain application/json;
+      client_max_body_size 50M;
+
+      upstream auth { server auth:8001; }
+      upstream knowledge { server knowledge:8002; }
+      upstream embedding { server embedding:8003; }
+      upstream chat { server chat:8004; }
+      upstream ingest { server ingest:8005; }
+
+      server {
+        listen 80;
+        
+        location /health { return 200 "OK\n"; }
+
+        location /v1/auth/ { proxy_pass http://auth/v1/auth/; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_set_header Connection ""; }
+        location /v1/users/ { proxy_pass http://auth/v1/users/; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; }
+        location /v1/tenants/ { proxy_pass http://auth/v1/tenants/; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; }
+        location /v1/knowledge-bases/ { proxy_pass http://knowledge/v1/knowledge-bases/; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_read_timeout 300s; }
+        location /v1/documents/ { proxy_pass http://knowledge/v1/documents/; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; }
+        location /v1/embeddings/ { proxy_pass http://embedding/v1/embeddings/; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_read_timeout 120s; }
+        location /v1/chat/ { proxy_pass http://chat/v1/chat/; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; proxy_read_timeout 300s; }
+        location /v1/conversations/ { proxy_pass http://chat/v1/conversations/; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; }
+        location /v1/stream/ { proxy_pass http://chat/v1/stream/; proxy_http_version 1.1; proxy_set_header Host $host; proxy_buffering off; proxy_cache off; chunked_transfer_encoding off; proxy_read_timeout 86400s; }
+        location /v1/tasks/ { proxy_pass http://ingest/v1/tasks/; proxy_http_version 1.1; proxy_set_header Host $host; proxy_set_header X-Real-IP $remote_addr; }
+        
+        location / { root /usr/share/nginx/html; try_files $uri $uri/ /index.html; }
+      }
+    }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: knowledgebot
+spec:
+  selector:
+    app: gateway
+  ports:
+    - port: 80
+      targetPort: 80
+
+---
+# ==================== Web UI ====================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: knowledgebot
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: knowledgebot-web:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: knowledgebot
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 80
+      targetPort: 80
+
+---
+# ==================== Ingress ====================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: knowledgebot-ingress
+  namespace: knowledgebot
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+spec:
+  rules:
+    - host: knowledgebot.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+          - path: /v1/
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 80
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 80
