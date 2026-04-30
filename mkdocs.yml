@@ -4,8 +4,8 @@ site_description: 企业级 RAG 知识库问答系统文档
 site_author: KnowledgeBot Team
 copyright: Copyright &copy; 2026 KnowledgeBot Team
 
-repo_name: knowledgebot
-repo_url: https://github.com/org/knowledgebot
+repo_name: KnowledgeBot
+repo_url: https://github.com/NblScript/KnowledgeBot
 edit_uri: edit/main/docs/
 
 theme:

@@ -1,74 +1,95 @@
-# Changelog
+# 变更日志
 
-All notable changes to KnowledgeBot will be documented in this file.
+本项目的所有重要更改都将记录在此文件中。
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
+版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 ## [Unreleased]
 
-### Added
-- 初始项目结构搭建
-- 文档系统架构规划
+### 新增
+- 待发布功能
 
-### Changed
-- Nothing yet
+## [1.0.0] - 2025-01-XX
 
-### Deprecated
-- Nothing yet
+### 新增
 
-### Removed
-- Nothing yet
+#### 微服务架构
+- Auth Service - 用户认证、租户管理、RBAC 权限
+- Knowledge Service - 知识库、文档管理
+- Embedding Service - 向量化、向量检索
+- Chat Service - RAG 对话、历史管理
+- Ingest Service - 文档处理、Celery 任务队列
 
-### Fixed
-- Nothing yet
+#### 前端
+- Vue 3 + Element Plus + TypeScript
+- 知识库管理界面
+- 文档上传进度追踪
+- 实时流式对话
+- 用户设置页面
 
-### Security
-- Nothing yet
+#### 多模型支持
+- OpenAI (GPT-4o-mini, GPT-4o)
+- 通义千问 (Qwen-Max, Qwen-Plus)
+- 智谱 AI (GLM-4, GLM-3-Turbo)
+- SiliconFlow (多种开源模型)
+
+#### Embedding 模型
+- OpenAI text-embedding-3-small/large
+- 通义千问 text-embedding-v2
+- 本地模型支持
+
+#### 文档处理
+- PDF 解析（PyMuPDF）
+- Word 文档（python-docx）
+- Markdown 解析
+- TXT/HTML 支持
+- 智能分块策略
+
+#### 向量检索
+- Milvus 集成
+- 混合检索（向量 + BM25）
+- 重排序支持
+
+#### 监控告警
+- Prometheus 指标采集
+- Grafana Dashboard
+- Alertmanager 告警通知
+- 邮件/Slack/Webhook 通知
+
+#### CI/CD
+- GitHub Actions 工作流
+- 自动化测试
+- Docker 镜像构建
+- Blue-Green 部署
+- 自动回滚
+
+#### Kubernetes
+- 完整 K8s 配置
+- HPA 自动扩缩容
+- Ingress 配置
+- Secrets 管理
+
+#### 其他
+- 多租户隔离
+- API 网关（Nginx）
+- 完整 API 文档（Swagger）
+- 单元测试覆盖
+
+### 文档
+- 完整 README
+- 贡献指南
+- API 参考
+- 部署指南
 
 ---
 
-## [1.0.0] - TBD
+## 版本说明
 
-### Added
-- 核心微服务架构
-  - API Gateway 服务
-  - Auth 认证服务
-  - User 用户服务
-  - Knowledge Base 知识库服务
-  - Document 文档服务
-  - Embedding 嵌入服务
-  - Retrieval 检索服务
-  - LLM 大模型服务
-  - Chat 对话服务
-- 向量数据库 Milvus 集成
-- BGE-M3 嵌入模型支持
-- 多租户架构
-- JWT 认证
-- REST API
-- WebSocket 流式输出
-- 文档解析（PDF、Word、Markdown）
-- RAG 检索增强生成
-- Docker Compose 部署支持
+- **[Major]**: 不兼容的 API 更改
+- **[Minor]**: 向后兼容的功能新增
+- **[Patch]**: 向后兼容的问题修复
 
----
+## 贡献
 
-## [0.1.0] - TBD
-
-### Added
-- MVP 版本规划
-
----
-
-## Version History
-
-| Version | Date | Description |
-|---------|------|-------------|
-| 1.0.0 | TBD | 正式发布版本 |
-| 0.1.0 | TBD | MVP 版本 |
-
----
-
-## Release Notes
-
-详细的版本发布说明请查看 [releases](releases/) 目录。
+请参阅 [CONTRIBUTING.md](../CONTRIBUTING.md)。
