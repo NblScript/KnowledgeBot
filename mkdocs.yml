@@ -1,0 +1,203 @@
+site_name: KnowledgeBot Documentation
+site_url: https://docs.knowledgebot.io
+site_description: 企业级 RAG 知识库问答系统文档
+site_author: KnowledgeBot Team
+copyright: Copyright &copy; 2026 KnowledgeBot Team
+
+repo_name: knowledgebot
+repo_url: https://github.com/org/knowledgebot
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: zh
+  logo: assets/images/logo.png
+  favicon: assets/images/favicon.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 切换到浅色模式
+  font:
+    text: Noto Sans SC
+    code: JetBrains Mono
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - content.action.view
+    - toc.follow
+    - toc.integrate
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+      separator: '[\s\-\.]+'
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: datetime
+      timezone: Asia/Shanghai
+      locale: zh
+      fallback_to_build_date: true
+  - mermaid2:
+      arguments:
+        theme: default
+  - awesome-pages:
+      filename: .pages
+      collapse_single_pages: true
+  - redirects:
+      redirect_maps: {}
+
+markdown_extensions:
+  # Python Markdown
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - meta
+  - md_in_html
+  - toc:
+      permalink: true
+      toc_depth: 3
+      slugify: !!python/name:pymdownx.slugs.uslugify
+  
+  # Python Markdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      auto_append:
+        - includes/abbreviations.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+        - name: math
+          class: arithmatex
+          format: !!python/name:pymdownx.arithmatex.fence_mathjax_format
+  - pymdownx.tabbed:
+      alternate_tab: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+nav:
+  - 首页: index.md
+  - 快速开始:
+      - getting-started/index.md
+      - 安装指南: getting-started/installation.md
+      - 快速体验: getting-started/quickstart.md
+  - 架构设计:
+      - 系统概述: architecture/overview.md
+      - 微服务架构: architecture/microservices.md
+      - 数据流向: architecture/data-flow.md
+      - 架构决策: architecture/adr/index.md
+  - API 参考:
+      - 概述: api/rest/reference.md
+      - 认证: api/rest/endpoints/auth.md
+      - 用户: api/rest/endpoints/users.md
+      - 知识库: api/rest/endpoints/knowledge-bases.md
+      - 文档管理: api/rest/endpoints/documents.md
+      - 对话: api/rest/endpoints/chat.md
+      - 检索: api/rest/endpoints/retrieval.md
+      - WebSocket: api/websocket/streaming-api.md
+  - 服务文档:
+      - API 网关: services/api-gateway/index.md
+      - 认证服务: services/auth-service/index.md
+      - 用户服务: services/user-service/index.md
+      - 知识库服务: services/knowledge-base-service/index.md
+      - 文档服务: services/document-service/index.md
+      - 嵌入服务: services/embedding-service/index.md
+      - 检索服务: services/retrieval-service/index.md
+      - LLM 服务: services/llm-service/index.md
+      - 对话服务: services/chat-service/index.md
+  - 开发指南:
+      - 环境搭建: development/environment-setup.md
+      - 编码规范: development/coding-standards.md
+      - Git 工作流: development/git-workflow.md
+      - 测试指南: development/testing-guide.md
+      - 调试指南: development/debugging.md
+      - 贡献指南: development/contributing.md
+  - 部署运维:
+      - Docker Compose: deployment/docker-compose.md
+      - Kubernetes:
+          - 集群搭建: deployment/kubernetes/cluster-setup.md
+          - Helm Charts: deployment/kubernetes/helm-charts.md
+          - 弹性伸缩: deployment/kubernetes/scaling.md
+      - 基础设施:
+          - 网络: deployment/infrastructure/networking.md
+          - 存储: deployment/infrastructure/storage.md
+          - 监控: deployment/infrastructure/monitoring.md
+          - 日志: deployment/infrastructure/logging.md
+      - 运维手册:
+          - 故障处理: deployment/operations/runbook.md
+          - 备份恢复: deployment/operations/backup-restore.md
+          - 安全运维: deployment/operations/security.md
+      - 环境变量: deployment/envars.md
+  - 测试:
+      - 测试策略: testing/strategy.md
+      - 单元测试: testing/unit-testing.md
+      - 集成测试: testing/integration-testing.md
+      - 端到端测试: testing/e2e-testing.md
+      - 性能测试: testing/performance-testing.md
+  - 参考资源:
+      - 术语表: reference/glossary.md
+      - 常见问题: reference/faq.md
+      - 故障排查: reference/troubleshooting.md
+      - 外部资源: reference/external-resources.md
+  - 变更日志: changelog/CHANGELOG.md
+
+extra:
+  version:
+    provider: mike
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/org/knowledgebot
+    - icon: fontawesome/solid/envelope
+      link: mailto:support@knowledgebot.io
+  generator: false
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/extra.js
